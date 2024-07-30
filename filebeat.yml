@@ -4,6 +4,6 @@ filebeat.inputs:
     - /var/lib/docker/containers/*/*.log
 
 output.elasticsearch:
-  hosts: ["${ELASTICSEARCH_HOST}"]
+  hosts: ["http://elasticsearch:9200"]
   username: "elastic"
   password: "elastic"
