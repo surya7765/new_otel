@@ -2,39 +2,58 @@ version: '3.8'
 
 services:
   elasticsearch:
-    image: docker.elastic.co/elasticsearch/elasticsearch:7.10.0
+    image: docker.elastic.co/elasticsearch/elasticsearch:7.13.4
+    container_name: elasticsearch
     environment:
       - discovery.type=single-node
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
     ports:
       - "9200:9200"
       - "9300:9300"
     volumes:
       - esdata:/usr/share/elasticsearch/data
+    networks:
+      - elastic
 
   kibana:
-    image: docker.elastic.co/kibana/kibana:7.10.0
+    image: docker.elastic.co/kibana/kibana:7.13.4
     ports:
       - "5601:5601"
     environment:
-      - ELASTICSEARCH_URL=http://elasticsearch:9200
+      - ELASTICSEARCH_URL:http://127.0.0.1:9200
+      - ELASTICSEARCH_HOSTS:http://127.0.0.1:9200
+    depends_on:
+      - elasticsearch
+    networks:
+      - elastic
 
   otel-collector:
-    image: otel/opentelemetry-collector:latest
+    image: otel/opentelemetry-collector-contrib:latest
+    command:
+      - "--config=/etc/otel-collector-config.yaml"
     volumes:
-      - ./otel-collector-config.yaml:/otel-collector-config.yaml
-    command: ["--config=/otel-collector-config.yaml"]
+      - ./otel-collector-config.yaml:/etc/otel-collector-config.yaml
+    ports:
+      - "4317:4317"
+      - "4318:4318"
+      - "9091:9091"
     environment:
       - ELASTICSEARCH_USERNAME=elastic
       - ELASTICSEARCH_PASSWORD=elastic
-    ports:
-      - "4317:4317"
+    depends_on:
+      - elasticsearch
+    networks:
+      - elastic
 
   app:
     build: .
     volumes:
       - .:/app
     environment:
-      - OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4317
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4317
     depends_on:
       - otel-collector
       - elasticsearch
@@ -46,7 +65,11 @@ services:
       - /var/lib/docker/containers:/var/lib/docker/containers
       - /var/run/docker.sock:/var/run/docker.sock
     environment:
-      - ELASTICSEARCH_HOST=http://elasticsearch:9200
+      - ELASTICSEARCH_HOST:http://elasticsearch:9200
+
+networks:
+  elastic:
+    driver: bridge
 
 volumes:
   esdata:
