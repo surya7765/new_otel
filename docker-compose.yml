@@ -6,13 +6,13 @@ services:
     container_name: elasticsearch
     environment:
       - discovery.type=single-node
+      - ES_JAVA_OPTS=-Xms1g -Xmx1g
     ulimits:
       memlock:
         soft: -1
         hard: -1
     ports:
       - "9200:9200"
-      - "9300:9300"
     volumes:
       - esdata:/usr/share/elasticsearch/data
     networks:
@@ -20,29 +20,49 @@ services:
 
   kibana:
     image: docker.elastic.co/kibana/kibana:7.13.4
+    container_name: kibana
+    environment:
+      - ELASTICSEARCH_URL=http://elasticsearch:9200
+      - ELASTICSEARCH_HOSTS=http://elasticsearch:9200
+      - XPACK_ENCRYPTEDSAVEDOBJECTS_ENCRYPTIONKEY=aGVsbG93b3JsZGhlbGxvd29ybGRoZWxsb3dvcmxkIQ==
     ports:
       - "5601:5601"
-    environment:
-      - ELASTICSEARCH_URL:http://127.0.0.1:9200
-      - ELASTICSEARCH_HOSTS:http://127.0.0.1:9200
     depends_on:
       - elasticsearch
     networks:
       - elastic
 
+  apm-server:
+    image: docker.elastic.co/apm/apm-server:7.13.4
+    container_name: apm-server
+    environment:
+      - output.elasticsearch.hosts=["http://elasticsearch:9200"]
+      - apm-server.kibana.enabled=true
+      - apm-server.kibana.host=http://kibana:5601
+      - apm-server.rum.enabled=true  # Enable Real User Monitoring (RUM)
+    ports:
+      - "8200:8200"
+    volumes:
+      - ./apm-server.yml:/usr/share/apm-server/apm-server.yml
+    depends_on:
+      - elasticsearch
+      - kibana
+    networks:
+      - elastic
+
   otel-collector:
     image: otel/opentelemetry-collector-contrib:latest
+    container_name: otel-collector
     command:
       - "--config=/etc/otel-collector-config.yaml"
     volumes:
       - ./otel-collector-config.yaml:/etc/otel-collector-config.yaml
     ports:
       - "4317:4317"
-      - "4318:4318"
-      - "9091:9091"
     environment:
       - ELASTICSEARCH_USERNAME=elastic
       - ELASTICSEARCH_PASSWORD=elastic
+      - OTEL_FEATURE_GATE=-component.UseLocalHostAsDefaultHost
     depends_on:
       - elasticsearch
     networks:
@@ -50,22 +70,35 @@ services:
 
   app:
     build: .
+    image: myapp
+    container_name: app
+    ports:
+      - "8000:8000"
     volumes:
       - .:/app
     environment:
-      - OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4317
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4317
     depends_on:
       - otel-collector
       - elasticsearch
+      - apm-server
+      - kibana
+    networks:
+      - elastic
 
   filebeat:
     image: docker.elastic.co/beats/filebeat:7.13.2
+    container_name: filebeat
     volumes:
       - ./filebeat.yml:/usr/share/filebeat/filebeat.yml
       - /var/lib/docker/containers:/var/lib/docker/containers
       - /var/run/docker.sock:/var/run/docker.sock
     environment:
-      - ELASTICSEARCH_HOST:http://elasticsearch:9200
+      - ELASTICSEARCH_HOST=http://elasticsearch:9200
+    depends_on:
+      - elasticsearch
+    networks:
+      - elastic
 
 networks:
   elastic:
@@ -73,3 +106,4 @@ networks:
 
 volumes:
   esdata:
+
