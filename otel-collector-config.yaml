@@ -4,7 +4,7 @@ receivers:
       grpc:
         endpoint: "0.0.0.0:4317"
       http:
-
+      
 processors:
   batch:
 
@@ -12,13 +12,15 @@ exporters:
   logging:
     loglevel: debug
   otlp:
-    endpoint: "http://localhost:4317"  # Update this endpoint as per your setup
+    endpoint: "http://otel-collector:4317"
     tls:
       insecure: true
-
-  elasticsearch:
-    endpoints: "http://elasticsearch:9200"
-    index: "traces"
+  otlphttp:
+    endpoint: "http://otel-collector:4317"
+    tls:
+      insecure: true
+  otlp/elastic:
+    endpoint: "http://apm-server:8200"
     tls:
       insecure: true
 
@@ -27,10 +29,40 @@ service:
     traces:
       receivers: [otlp]
       processors: [batch]
-      exporters: [logging, otlp, elasticsearch]
+      exporters: [logging, otlp/elastic]
     metrics:
       receivers: [otlp]
-      exporters: [logging, otlp, elasticsearch]
+      exporters: [logging, otlp/elastic]
     logs:
       receivers: [otlp]
-      exporters: [logging, otlp, elasticsearch]
+      exporters: [logging, otlp/elastic]
+  
+
+
+
+
+
+
+  # memory_limiter:
+  #   check_interval: 1s
+  #   limit_mib: 2000
+
+  # sending_queue:
+  #     enabled: true
+  #     num_consumers: 10
+  #     queue_size: 5000
+
+
+
+  
+  # debug:
+  #   verbosity: detailed
+  # otlp:
+  #   endpoint: "http://otel-collector:4317"  # Update this endpoint as per your setup
+  #   tls:
+  #     insecure: true
+
+
+  # telemetry:
+  #   logs:
+  #     encoding: json
