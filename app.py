@@ -17,8 +17,11 @@ async def train(instance_id: str = Query(...), api_key: str = Header(...)):
         x_train, y_train = preprocess_data(data)
         model = create_model((x_train.shape[1], 1))
         trained_model = train_model(model, x_train, y_train)
+        
+        # Log the success message
         logger.info("Model trained successfully", extra={"instanceId": instance_id})
     except Exception as e:
+        logger.error(f"Error during training: {e}", extra={"instanceId": instance_id})
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/predict")
@@ -28,14 +31,18 @@ async def make_prediction(
     api_key: str = Header(...)):
     try:
         if trained_model is None:
-            raise HTTPException(status_code=400, detail="Model not trained yet. Please train the model first.")
+            error_message = "Model not trained yet. Please train the model first."
+            logger.error(error_message, extra={"instanceId": instance_id})
+            raise HTTPException(status_code=400, detail=error_message)
         
         new_data = pd.DataFrame(data, columns=["Close"])
         x_new, _, _ = preprocess_data(new_data)
         predictions = predict(trained_model, x_new)
-        return {"predictions": predictions.tolist()}
-    
+        
+        # Log the predictions
+        logger.info(f"Predictions made successfully: {predictions.tolist()}", extra={"instanceId": instance_id})
     except Exception as e:
+        logger.error(f"Error during prediction: {e}", extra={"instanceId": instance_id})
         raise HTTPException(status_code=500, detail=f"Error during prediction: {e}")
 
 if __name__ == "__main__":
