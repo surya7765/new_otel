@@ -2,7 +2,7 @@ import pandas as pd
 from typing import List
 from fastapi import FastAPI, HTTPException, Query, Header
 from model import load_data, preprocess_data, create_model, train_model, predict
-from metrics import instrument_app
+from metrics import instrument_app, logger
 
 app = FastAPI()
 instrument_app(app)
@@ -17,7 +17,7 @@ async def train(instance_id: str = Query(...), api_key: str = Header(...)):
         x_train, y_train = preprocess_data(data)
         model = create_model((x_train.shape[1], 1))
         trained_model = train_model(model, x_train, y_train)
-        return {"message": "Model trained successfully"}
+        logger.info("Model trained successfully", extra={"instanceId": instance_id})
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
