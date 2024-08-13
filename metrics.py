@@ -7,9 +7,9 @@ from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor
 from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
 from opentelemetry.exporter.otlp.proto.grpc.metric_exporter import OTLPMetricExporter
+from opentelemetry.exporter.otlp.proto.grpc._log_exporter import OTLPLogExporter
 from opentelemetry.sdk._logs import LoggerProvider, LoggingHandler
 from opentelemetry.sdk._logs.export import BatchLogRecordProcessor
-from opentelemetry.exporter.otlp.proto.grpc._log_exporter import OTLPLogExporter
 from fastapi import FastAPI, Request
 import psutil
 import time
@@ -36,7 +36,6 @@ class CustomLogFormatter(logging.Formatter):
         }
         return json.dumps(custom_log)
 
-# Initialize the logger
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
@@ -45,20 +44,24 @@ def get_current_instance_id():
     global serviceInstanceID
     return serviceInstanceID
 
-# Check if there are no handlers attached to the logger
 if not logger.handlers:
-    # Default handler for standard output with basic formatting
     handler = logging.StreamHandler()
     handler.setFormatter(logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s'))
     logger.addHandler(handler)
 
-# Apply custom log formatter
 handler = logger.handlers[0]
 handler.setFormatter(CustomLogFormatter(get_current_instance_id))
 
-
 # Tracer initialization
 tracer = trace.get_tracer(__name__)
+
+# Initialize OpenTelemetry logging
+def initialize_logging(resource: Resource):
+    log_exporter = OTLPLogExporter(endpoint="http://otel-collector:4317", insecure=True)
+    log_provider = LoggerProvider(resource=resource)
+    log_provider.add_log_record_processor(BatchLogRecordProcessor(log_exporter))
+    otlp_handler = LoggingHandler(level=logging.INFO, logger_provider=log_provider)
+    logger.addHandler(otlp_handler)
 
 # Global variables for metrics
 API_CALLS = None
@@ -81,15 +84,11 @@ def create_resource(instance_id: str, service_id: str, app_id: str) -> Resource:
         "app.id": app_id
     })
 
-# Ensure TracerProvider is set up
 def initialize_tracing(resource: Resource):
-    tracer_provider = TracerProvider(resource=resource)
-    trace.set_tracer_provider(tracer_provider)
-    
+    trace.set_tracer_provider(TracerProvider(resource=resource))
     otlp_exporter = OTLPSpanExporter(endpoint="http://otel-collector:4317", insecure=True)
     span_processor = BatchSpanProcessor(otlp_exporter)
     trace.get_tracer_provider().add_span_processor(span_processor)
-
 
 def initialize_metrics(resource: Resource):
     global API_CALLS, API_LATENCY, API_ERRORS, REQUEST_COUNT, ENDPOINT_POPULARITY, REQUEST_TIME, PEAK_USAGE_TIME, REQUEST_LATENCY, MODEL_VERSION, PREDICTION_ACCURACY
@@ -121,27 +120,13 @@ def initialize_metrics(resource: Resource):
     meter.create_observable_gauge("cpu_usage", callbacks=[cpu_usage_observable], description="CPU Usage", unit="percent")
     meter.create_observable_gauge("memory_usage", callbacks=[memory_usage_observable], description="Memory Usage", unit="percent")
 
-# Initialize OpenTelemetry logging
-def initialize_logging(resource: Resource):
-    log_exporter = OTLPLogExporter(endpoint="http://otel-collector:4317", insecure=True)
-    log_provider = LoggerProvider(resource=resource)
-    log_processor = BatchLogRecordProcessor(log_exporter)
-    log_provider.add_log_record_processor(log_processor)
-    
-    # Attach a handler that sends logs to OpenTelemetry
-    otlp_logging_handler = logging.StreamHandler()
-    otlp_logging_handler.setLevel(logging.INFO)
-    otlp_logging_handler.setFormatter(CustomLogFormatter(get_current_instance_id))
-    logger.addHandler(otlp_logging_handler)
-    logger.setLevel(logging.INFO)
-
-
 def verify_instance_api(instance_id: str, service_api_key: str):
     return {"instance_id": instance_id, "service_id": "service-123", "app_id": "app-456"}
 
 def instrument_app(app: FastAPI):
     FastAPIInstrumentor.instrument_app(app)
     
+    # Middleware in metrics.py
     @app.middleware("http")
     async def metrics_and_traces_middleware(request: Request, call_next):
         try:
@@ -166,7 +151,6 @@ def instrument_app(app: FastAPI):
             with trace.get_tracer(__name__).start_as_current_span(request.url.path) as span:
                 span.set_attribute("instanceId", verification_info.get("instance_id", serviceInstanceID))
                 span.set_attribute("logLevel", logging.getLevelName(logger.level))
-                span.set_attribute("logs", logger.handlers[0].name if logger.handlers else "default")
 
                 response = await call_next(request)
 
@@ -175,14 +159,12 @@ def instrument_app(app: FastAPI):
                 # Record API_CALLS, avoiding None values
                 API_CALLS.add(1, attributes={
                     "instanceId": verification_info.get("instance_id", serviceInstanceID),
-                    "logLevel": logging.getLevelName(logger.level),
-                    "logs": logger.handlers[0].name if logger.handlers else "default"
+                    "logLevel": logging.getLevelName(logger.level)
                 })
 
                 API_LATENCY.record(latency, attributes={
                     "instanceId": verification_info.get("instance_id", serviceInstanceID),
-                    "logLevel": logging.getLevelName(logger.level),
-                    "logs": logger.handlers[0].name if logger.handlers else "default"
+                    "logLevel": logging.getLevelName(logger.level)
                 })
 
                 REQUEST_TIME.record(latency, attributes={
@@ -204,8 +186,7 @@ def instrument_app(app: FastAPI):
                 logger.info({
                     "message": f"API latency for {request.url.path}: {latency:.4f} seconds",
                     "instanceId": verification_info.get("instance_id", serviceInstanceID),
-                    "logLevel": logging.getLevelName(logger.level),
-                    "logs": logger.handlers[0].formatter.format if logger.handlers else "default"
+                    "logLevel": logging.getLevelName(logger.level)
                 })
 
                 return response
@@ -214,13 +195,8 @@ def instrument_app(app: FastAPI):
             # Log error if None value or another error occurs
             API_ERRORS.add(1, attributes={
                 "instanceId": verification_info.get("instance_id", serviceInstanceID) if 'verification_info' in locals() else serviceInstanceID,
-                "logLevel": logging.getLevelName(logger.level),
-                "logs": logger.handlers[0].formatter.format if logger.handlers else "default"
+                "logLevel": logging.getLevelName(logger.level)
             })
-            logger.error({
-                "message": f"Error processing request: {str(e)}",
-                "instanceId": verification_info.get("instance_id", serviceInstanceID) if 'verification_info' in locals() else serviceInstanceID,
-                "logLevel": logging.getLevelName(logger.level),
-                "logs": logger.handlers[0].formatter.format if logger.handlers else "default"
-            })
+            logger.error(f"Error processing request: {e}", extra={"instanceId": serviceInstanceID})
             raise e
+
